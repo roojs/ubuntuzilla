@@ -1,3 +1,26 @@
+This was the ubuntuzilla code...
+
+Since I detest snap packages - this has been modified to download the thunderbird release  - make a package of it and install it
+
+**Finally snap free**
+
+Checkout the repo
+
+run 
+
+```bash
+#python3 mozillapackager.py
+```
+
+it installs as `thunderbird-mozilla-build` = so should be no need to pin/block thunderbird install
+(recommend removing thunderbird beforehand) - also if you profile doesnt come up try
+
+```bash
+#thunderbird --ProfileManager
+```
+
+
+
 This code is for packaging official Mozilla releases of Firefox, Thunderbird, and Seamonkey into .deb packages within an APT repository for use with Debian-derivative systems. 
 
 It is currently being used to maintain the Ubuntuzilla repository which is hosted at https://sourceforge.net/projects/ubuntuzilla/
