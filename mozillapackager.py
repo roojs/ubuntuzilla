@@ -58,6 +58,7 @@ import stat
 import time
 import shutil
 import subprocess
+import shlex
 import dbus
 import urllib.request, urllib.error, urllib.parse
 import traceback
@@ -192,31 +193,36 @@ class BaseStarter:
         parser.add_option("-d", "--debug", action="store_true", dest="debug", help="debug mode (print some extra debug output). [default: %default]")
         parser.add_option("-t", "--test", action="store_true", dest="test", help="make a dry run, without actually installing anything. [default: %default]")
         parser.add_option("-p", "--package", type="choice", action="store", dest="package", choices=['firefox','firefox-esr','thunderbird','seamonkey'], help="which package to work on: firefox, firefoxesr, thunderbird, or seamonkey. [default: %default]")
-        parser.add_option("-a", "--action", type="choice", action="store", dest="action", choices=['getversion','builddeb','adddebtorepo','uploadrepo','cleanup','all',], help="what to do with the selected package: builddeb creates the .deb; adddebtorepo updates the repository; uploadrepo uploads the repository; cleanup removes temporary files; all does all of this from start to finish. [default: %default]")
-        parser.add_option("-g", "--skipgpg", action="store_true", dest="skipgpg", help="skip gpg signature verification. [default: %default]")
-        parser.add_option("-u", "--unattended", action="store_true", dest="unattended", help="run in unattended mode. [default: %default]")
+        parser.add_option("-a", "--action", type="choice", action="store", dest="action", choices=['getversion','builddeb','cleanup','all'], help="getversion: print upstream version; builddeb: create .deb (and install unless --no-install); cleanup: remove temp files; all: build, install, then cleanup prompt. [default: %default]")
+        parser.add_option("--verify-gpg", action="store_false", dest="skipgpg", help="verify GPG signature on SHA512SUMS (needs working gpg keyservers). Default is off: tarball is still checked with sha512sum.")
+        parser.add_option("-g", "--skipgpg", action="store_true", dest="skipgpg", help=optparse.SUPPRESS_HELP)
+        parser.add_option("-I", "--interactive", action="store_false", dest="unattended", help="prompt for confirmations (version, errors, cleanup). Default is non-interactive.")
+        parser.add_option("-u", "--unattended", action="store_true", dest="unattended", help=optparse.SUPPRESS_HELP)
         #parser.add_option("-l", "--localization", action="store", dest="localization", help="for use with unattended mode only. choose localization (language) for your package of choice. note that the burden is on you to make sure that this localization of your package actually exists. [default: %default]")
         parser.add_option("-v", "--debversion", action="store", dest="debversion", help="The ubuntu-version of the package to create. To be used in case a bad package was pushed out, and users should be upgraded to a fresh repack. [default: %default]")
         parser.add_option("-b", "--debdir", action="store", dest="debdir", help="Directory where to stick the completed .deb file. [default: %default]")
+        parser.add_option("--no-install", action="store_false", dest="install_after_build", help="after a successful build, do not install the .deb with apt-get (default is to install).")
         parser.add_option("-r", "--targetdir", action="store", dest="targetdir", help="installation/uninstallation target directory for the .deb. [default: %default]")
         parser.add_option("-i", "--arch", type="choice", action="store", dest="arch", choices=['i686','x86_64'], help="choose architecture: i686 or x86_64. [default: %default]")
-        parser.add_option("-m", "--mirror", action="callback", callback=prepend_callback, type="string", dest="mirrors", help="Prepend a mozilla mirror server to the default list of mirrors. Use ftp mirrors only. Include path component up to the 'firefox', 'thunderbird', or 'seamonkey' directories. (See http://www.mozilla.org/mirrors.html for list of mirrors). [default: %default]")
+        parser.add_option("-m", "--mirror", action="callback", callback=prepend_callback, type="string", dest="mirrors", help="Prepend a mirror base URL to the default list. Path must end after 'pub/', e.g. https://archive.mozilla.org/pub/ (Thunderbird/Firefox) or https://archive.seamonkey-project.org/ (Seamonkey). [default: %default]")
         parser.add_option("-k", "--keyservers", action="callback", callback=prepend_callback, type="string", dest="keyservers", help="Prepend a pgp keyserver to the default list of keyservers. [default: %default]")
         
         parser.set_defaults(debug=False, 
                 test=False, 
-                package="firefox",
+                package="thunderbird",
                 action="all",
-                skipgpg=False,
-                unattended=False,
+                skipgpg=True,
+                unattended=True,
                 debversion='1',
                 #localization="en-US",
                 #skipbackup=False,
                 debdir=os.getcwd(),
+                install_after_build=True,
                 targetdir="/opt",
-                arch="i686",
-                mirrors=['http://releases.mozilla.org/pub/','https://archive.seamonkey-project.org/'],
-                keyservers = ['subkeys.pgp.net',
+                arch="x86_64",
+                mirrors=['https://archive.mozilla.org/pub/'],
+                keyservers = ['hkps://keys.openpgp.org',
+                        'subkeys.pgp.net',
                         'pgpkeys.mit.edu',
                         'pgp.mit.edu',
                         'wwwkeys.pgp.net',
@@ -279,14 +285,14 @@ class MozillaInstaller:
         self.debarch = {'i686':'i386','x86_64':'amd64'}
 
     def start(self):
-        if self.options.action in ['builddeb','adddebtorepo','uploadrpo','cleanup','all']:
+        if self.options.action in ['builddeb','cleanup','all']:
             self.welcome()
         
         self.getLatestVersion()
         if self.options.action in ['getversion']:
             print(self.releaseVersion)
         
-        if self.options.action in ['builddeb','adddebtorepo','uploadrpo','cleanup','all']:
+        if self.options.action in ['builddeb','cleanup','all']:
             self.confirmLatestVersion()
         
         if self.options.action in ['builddeb','all']:
@@ -302,14 +308,12 @@ class MozillaInstaller:
             self.createSymlinks()
             self.createMenuItem()
             self.createDeb()
-        if self.options.action in ['adddebtorepo','all']:
-            self.createRepository()
-        if self.options.action in ['uploadrepo','all']:
-            self.syncRepository()
+            if self.options.install_after_build and not self.options.test:
+                self.installBuiltDeb()
         if self.options.action in ['cleanup','all']:
             self.cleanup()
         
-        if self.options.action in ['builddeb','adddebtorepo','uploadrpo','cleanup','all']:
+        if self.options.action in ['builddeb','cleanup','all']:
             self.printSuccessMessage()
 
     def welcome(self):
@@ -352,7 +356,7 @@ class MozillaInstaller:
             pkg = self.options.package
             for mirror in self.options.mirrors:
                 try:
-                    self.packageFilename = self.util.getSystemOutput(executionstring="curl --no-progress-meter " + mirror + pkg + "/releases/" + self.releaseVersion + "/linux-" + self.options.arch + "/en-US/ | w3m -dump -T text/html | grep '" + self.options.package + ".*tar\.bz2\|xz' | awk '{print $2}'", numlines=1)
+                    self.packageFilename = self.util.getSystemOutput(executionstring="curl --no-progress-meter " + mirror + pkg + "/releases/" + self.releaseVersion + "/linux-" + self.options.arch + "/en-US/ | w3m -dump -T text/html | grep '" + self.options.package + ".*tar\\.bz2\\|xz' | awk '{print $2}'", numlines=1)
                     print("Success!: " + self.packageFilename)
                     break
                 except SystemCommandExecutionError:
@@ -431,18 +435,19 @@ class MozillaInstaller:
 
         
         self.util.robustDownload(argsdict={'executionstring':"wget -c --tries=5 --read-timeout=20 --waitretry=10 -q -nv " + "%mirror%" + package + "/releases/" + self.releaseVersion + "/SHA512SUMS", 'includewithtest':True}, errormsg="Failed to retrieve checksums. This may be due to transient network problems, so try again later. Exiting.")
-        self.util.robustDownload(argsdict={'executionstring':"wget -c --tries=5 --read-timeout=20 --waitretry=10 -q -nv " + "%mirror%" + package + "/releases/" + self.releaseVersion + "/SHA512SUMS.asc", 'includewithtest':True}, errormsg="Failed to retrieve checksums. This may be due to transient network problems, so try again later. Exiting.")
-        
-        self.verifyGPGSignature()
+        if not self.options.skipgpg:
+            self.util.robustDownload(argsdict={'executionstring':"wget -c --tries=5 --read-timeout=20 --waitretry=10 -q -nv " + "%mirror%" + package + "/releases/" + self.releaseVersion + "/SHA512SUMS.asc", 'includewithtest':True}, errormsg="Failed to retrieve checksums. This may be due to transient network problems, so try again later. Exiting.")
+            self.verifyGPGSignature()
         
         # extract desired shasum line, remove extra junk from filepath/name.
         if os.path.isfile(self.sigFilename):
             print("Using existing shasum file.\n")
         else:
-            os.system("cat SHA512SUMS | grep linux-" + self.options.arch + " | grep en-US | grep " + package + " | grep 'tar\.bz2\|xz' | grep -v sdk | awk '{gsub(\".*\",\"" + self.packageFilename + "\",$2); print $0}' > " + self.sigFilename)
+            os.system("cat SHA512SUMS | grep linux-" + self.options.arch + " | grep en-US | grep " + package + " | grep 'tar\\.bz2\\|xz' | grep -v sdk | awk '{gsub(\".*\",\"" + self.packageFilename + "\",$2); print $0}' > " + self.sigFilename)
             
         os.remove('SHA512SUMS')
-        os.remove('SHA512SUMS.asc')
+        if not self.options.skipgpg:
+            os.remove('SHA512SUMS.asc')
 
     def verifyMD5Sum(self):
         print("\nVerifying checksum\n")
@@ -459,6 +464,13 @@ class MozillaInstaller:
                 print("OK, exiting without deleting files.\n")
             sys.exit(1)
 
+    def _maybe_bundle_ubuntuzilla_apt_key(self):
+        '''Ubuntuzilla .debs used to ship the apt repo signing key for upstream's repository.
+        Skip if the key is not installed locally (typical for one-off local builds).'''
+        src = '/etc/apt/trusted.gpg.d/ubuntuzilla.gpg'
+        if os.path.isfile(src):
+            self.util.execSystemCommand(executionstring="mkdir -p " + os.path.join(self.debdir, 'etc', 'apt', 'trusted.gpg.d'))
+            self.util.execSystemCommand(executionstring="cp " + src + " " + os.path.join(self.debdir, 'etc', 'apt', 'trusted.gpg.d', 'ubuntuzilla.' + self.options.package + '.gpg'))
 
     def createDebStructure(self):
         provides = 'gnome-www-browser, www-browser, '
@@ -473,9 +485,7 @@ class MozillaInstaller:
         self.util.execSystemCommand(executionstring="mkdir -p " + os.path.join(self.debdir, 'usr','share','pixmaps'))
         self.util.execSystemCommand(executionstring="mkdir -p " + os.path.join(self.debdir, 'DEBIAN'))
         
-        # to push out the new repository signing key, need to upgrade from DSA so we can use SHA2 and stop the weak digest warnings.
-        self.util.execSystemCommand(executionstring="mkdir -p " + os.path.join(self.debdir, 'etc','apt','trusted.gpg.d'))
-        self.util.execSystemCommand(executionstring="cp /etc/apt/trusted.gpg.d/ubuntuzilla.gpg " + os.path.join(self.debdir, 'etc','apt','trusted.gpg.d','ubuntuzilla.' + self.options.package + '.gpg'))
+        self._maybe_bundle_ubuntuzilla_apt_key()
         
         os.chdir(os.path.join(self.debdir, 'DEBIAN'))
         open('control', 'w').write('''Package: ''' + self.packagename + '''
@@ -567,24 +577,25 @@ MimeType=''' + self.mimeType)
         os.chdir(os.path.join('/tmp',self.options.package + 'debbuild'))
         self.util.execSystemCommand('sudo chown -R root:root debian')
         self.util.execSystemCommand('dpkg-deb -Zgzip --build debian ' + self.options.debdir)
-    
-    def createRepository(self):
-        print("Would you like to update the local repository with the package just created [y/n]? ")
-        self.askyesno()
-        if self.ans == 'y':
-            os.chdir(self.options.debdir)
-            self.util.execSystemCommand('reprepro -S web -P extra -A ' + self.debarch[self.options.arch] + ' -Vb ../mozilla-apt-repository includedeb all ./'+self.packagename+'_' + self.releaseVersion + '-0ubuntu' + self.options.debversion + '_' + self.debarch[self.options.arch] + '.deb')
-        else:
-            print("\nOK, not updating repository...\n")
-    
-    def syncRepository(self):
-        print("Would you like to upload the repository updates to the server [y/n]? ")
-        self.askyesno()
-        if self.ans == 'y':
-            os.chdir(self.options.debdir)
-            self.util.execSystemCommand('rsync -avP -e ssh ../mozilla-apt-repository/* nanotube,ubuntuzilla@frs.sourceforge.net:/home/frs/project/u/ub/ubuntuzilla/mozilla/apt/')
-        else:
-            print("\nOK, not uploading repository to server...\n")
+
+    def built_deb_filename(self):
+        return '%s_%s-0ubuntu%s_%s.deb' % (
+            self.packagename,
+            self.releaseVersion,
+            self.options.debversion,
+            self.debarch[self.options.arch],
+        )
+
+    def built_deb_path(self):
+        return os.path.abspath(os.path.join(self.options.debdir, self.built_deb_filename()))
+
+    def installBuiltDeb(self):
+        deb_path = self.built_deb_path()
+        if not os.path.isfile(deb_path):
+            print("Expected .deb not found at " + deb_path, file=sys.stderr)
+            raise SystemCommandExecutionError("Built .deb missing at " + deb_path)
+        print("\nInstalling " + deb_path + "\n")
+        self.util.execSystemCommand('sudo apt-get install -y ' + shlex.quote(deb_path))
     
     def printSuccessMessage(self):
         print("\nThe new " + self.options.package.capitalize() + " version " + self.releaseVersion + " has been packaged successfully.")
@@ -656,7 +667,7 @@ class FirefoxESRInstaller(MozillaInstaller):
         print("Retrieving package name for Firefox ESR...")
         for mirror in self.options.mirrors:
             try:
-                self.packageFilename = self.util.getSystemOutput(executionstring="curl --no-progress-meter " + mirror + "firefox/releases/" + self.releaseVersion + "/linux-" + self.options.arch + "/en-US/ | w3m -dump -T text/html | grep 'firefox.*tar\.bz2\|xz' | awk '{print $2}'", numlines=1)
+                self.packageFilename = self.util.getSystemOutput(executionstring="curl --no-progress-meter " + mirror + "firefox/releases/" + self.releaseVersion + "/linux-" + self.options.arch + "/en-US/ | w3m -dump -T text/html | grep 'firefox.*tar\\.bz2\\|xz' | awk '{print $2}'", numlines=1)
                 print("Success!: " + self.packageFilename)
                 break
             except SystemCommandExecutionError:
@@ -723,9 +734,7 @@ MimeType=''' + self.mimeType)
         self.util.execSystemCommand(executionstring="mkdir -p " + os.path.join(self.debdir, 'usr','share','pixmaps'))
         self.util.execSystemCommand(executionstring="mkdir -p " + os.path.join(self.debdir, 'DEBIAN'))
         
-        # to push out the new repository signing key, need to upgrade from DSA so we can use SHA2 and stop the weak digest warnings.
-        self.util.execSystemCommand(executionstring="mkdir -p " + os.path.join(self.debdir, 'etc','apt','trusted.gpg.d'))
-        self.util.execSystemCommand(executionstring="cp /etc/apt/trusted.gpg.d/ubuntuzilla.gpg " + os.path.join(self.debdir, 'etc','apt','trusted.gpg.d','ubuntuzilla.' + self.options.package + '.gpg'))
+        self._maybe_bundle_ubuntuzilla_apt_key()
         
         os.chdir(os.path.join(self.debdir, 'DEBIAN'))
         open('control', 'w').write('''Package: firefox-esr-mozilla-build
@@ -760,8 +769,9 @@ class ThunderbirdInstaller(MozillaInstaller):
 
     def getLatestVersion(self):
         MozillaInstaller.getLatestVersion(self)
-        self.releaseVersion = self.util.getSystemOutput(executionstring="wget --user-agent=\"Mozilla\" -c --tries=20 --read-timeout=60 --waitretry=10 -q -nv -O - https://www.thunderbird.net/en-US/thunderbird/all/ |grep 'releasenotes' -m 1", numlines=1, errormessage="Failed to retrieve the latest version of "+ self.options.package.capitalize())
-        self.releaseVersion = re.search(r'thunderbird/(.*)/releasenotes',self.releaseVersion).group(1)
+        # Use the same download.mozilla.org bouncer as Firefox; version is independent of arch.
+        self.releaseVersion = self.util.getSystemOutput(executionstring="wget -S --tries=5 -O - \"https://download.mozilla.org/?product=thunderbird-latest&os=linux64&lang=en-US\" 2>&1 | grep \"Location:\" -m 1", numlines=1, errormessage="Failed to retrieve the latest version of "+ self.options.package.capitalize())
+        self.releaseVersion = re.search(r'releases/(([0-9]+\.)+[0-9]+)', self.releaseVersion).group(1)
 
 
     def downloadPackage(self): # done, self.packageFilename
@@ -787,6 +797,8 @@ class SeamonkeyInstaller(MozillaInstaller):
     '''
     def __init__(self,options):
         MozillaInstaller.__init__(self, options)
+        # Seamonkey archives live on their own host, not archive.mozilla.org.
+        self.options.mirrors = ['https://archive.seamonkey-project.org/']
 
     def getLatestVersion(self):
         MozillaInstaller.getLatestVersion(self)
