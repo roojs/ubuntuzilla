@@ -585,7 +585,7 @@ MimeType=''' + self.mimeType)
     def createDeb(self):
         os.chdir(os.path.join('/tmp',self.options.package + 'debbuild'))
         self.util.execSystemCommand('sudo chown -R root:root debian')
-        self.util.execSystemCommand('dpkg-deb -Zgzip --build debian ' + self.options.debdir)
+        self.util.execSystemCommand('dpkg-deb -Zxz --build debian ' + self.options.debdir)
 
     def built_deb_filename(self):
         return '%s_%s-0ubuntu%s_%s.deb' % (
