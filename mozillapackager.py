@@ -491,10 +491,16 @@ class MozillaInstaller:
         self._maybe_bundle_ubuntuzilla_apt_key()
         
         os.chdir(os.path.join(self.debdir, 'DEBIAN'))
+        if self.options.package == 'thunderbird':
+            section = 'mail'
+        else:
+            section = 'web'
         open('control', 'w').write('''Package: ''' + self.packagename + '''
 Version: ''' + self.releaseVersion + '''-0ubuntu''' + self.options.debversion + '''
 Maintainer: ''' + self.version.author + ''' <''' + self.version.author_email + '''>
 Architecture: ''' + self.debarch[self.options.arch] + '''
+Section: ''' + section + '''
+Priority: optional
 Provides: '''+ provides + self.options.package+'''
 Description: Mozilla '''+self.options.package.capitalize()+''', official Mozilla build, packaged for Ubuntu by the Ubuntuzilla project.
  This is the unmodified Mozilla release binary of '''+self.options.package.capitalize()+''', packaged into a .deb by the Ubuntuzilla project.
