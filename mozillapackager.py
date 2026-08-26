@@ -59,7 +59,6 @@ import time
 import shutil
 import subprocess
 import shlex
-import dbus
 import urllib.request, urllib.error, urllib.parse
 import traceback
 import signal # used to workaround the python sigpipe bug
@@ -252,19 +251,23 @@ class BaseStarter:
             #ub.start()
     
     def check_uid(self):
-        if os.getuid() == 0:
-            print("\nYou appear to be trying to run Ubuntuzilla as root.\nUbuntuzilla really shouldn't be run as root under normal circumstances.\nYou are advised to exit now and run it as regular user, without 'sudo'.\nDo not continue, unless you know what you're doing.\nDo you want to exit now?")
-            while 1:
-                ans = input("Please enter 'y' or 'n': ")
-                if ans in ['y','Y','n','N']:
-                    ans = ans.lower()
-                    break
-            
-            if ans == 'y':
-                print("Please run Ubuntuzilla again, without sudo.")
-                sys.exit()
-            else:
-                print("Hope you know what you're doing... Continuing...")
+        if os.getuid() != 0:
+            return
+        if self.options.unattended:
+            print("Warning: running as root (unattended); continuing.")
+            return
+        print("\nYou appear to be trying to run Ubuntuzilla as root.\nUbuntuzilla really shouldn't be run as root under normal circumstances.\nYou are advised to exit now and run it as regular user, without 'sudo'.\nDo not continue, unless you know what you're doing.\nDo you want to exit now?")
+        while 1:
+            ans = input("Please enter 'y' or 'n': ")
+            if ans in ['y','Y','n','N']:
+                ans = ans.lower()
+                break
+        
+        if ans == 'y':
+            print("Please run Ubuntuzilla again, without sudo.")
+            sys.exit()
+        else:
+            print("Hope you know what you're doing... Continuing...")
                     
     
 class MozillaInstaller:

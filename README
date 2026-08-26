@@ -21,6 +21,8 @@ it installs as `thunderbird-mozilla-build` = so should be no need to pin/block t
 
 
 
+A daily GitHub Actions workflow polls Mozilla for a new Thunderbird and, when one appears, wraps the official Linux tarball and publishes a GitHub Release. Manual run: **Actions → Publish Thunderbird release**.
+
 This code is for packaging official Mozilla releases of Firefox, Thunderbird, and Seamonkey into .deb packages within an APT repository for use with Debian-derivative systems. 
 
 It is currently being used to maintain the Ubuntuzilla repository which is hosted at https://sourceforge.net/projects/ubuntuzilla/

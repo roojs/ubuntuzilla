@@ -1,0 +1,49 @@
+name: Publish Thunderbird release
+
+# Daily: if Mozilla has a newer Thunderbird than the latest GitHub Release, wrap
+# the official tarball in a .deb and publish it. Same idea as webkitgtk-automation's
+# monitor-upstream.yml, without the rebuild/patch step in between.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Rebuild and upload even if this Thunderbird version already has a release
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: Log what would happen without building or publishing
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ubuntuzilla-publish-thunderbird
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install packager dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wget curl w3m xz-utils dpkg
+
+      - name: Publish if Mozilla has a new Thunderbird
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+          FORCE_BUILD: ${{ github.event.inputs.force_build == 'true' && '1' || '0' }}
+        run: |
+          chmod +x ./scripts/publish-thunderbird-release.sh
+          ./scripts/publish-thunderbird-release.sh
